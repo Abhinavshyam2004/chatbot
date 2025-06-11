@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Chatbot</title>
+  <link rel="icon" href="logo1.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+  <div id="chat-container">
+    <div id="messages"></div>
+    <div id="input-area">
+      <input id="input" type="text" placeholder="Ask Jarvis..." autocomplete="off" />
+      <label id="upload-label" for="file" title="Upload file">+</label>
+      <input type="file" id="file" hidden />
+      <button id="mic-btn" title="Voice input"><i class="fas fa-microphone"></i></button>
+    </div>
+    <button id="clearChat">Clear Chat</button>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+  <script>
+    const input = document.getElementById("input");
+    const messages = document.getElementById("messages");
+    const fileInput = document.getElementById("file");
+    const micBtn = document.getElementById("mic-btn");
+    const clearChatBtn = document.getElementById("clearChat");
+
+    const EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
+    let sessionId = localStorage.getItem('sessionId');
+    let createdAt = localStorage.getItem('sessionCreatedAt');
+    const now = Date.now();
+
+    if (!sessionId || !createdAt || now - parseInt(createdAt) > EXPIRY_MS) {
+      if (sessionId) localStorage.removeItem('chatHistory_' + sessionId);
+      sessionId = crypto.randomUUID();
+      localStorage.setItem('sessionId', sessionId);
+      localStorage.setItem('sessionCreatedAt', now);
+    }
+
+    function escapeHTML(str) {
+      return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function formatResponse(text) {
+      if (!text) return "";
+      return text
+        .replace(/^### (.*)$/gm, "<h3>$1</h3>")
+        .replace(/^## (.*)$/gm, "<h2>$1</h2>")
+        .replace(/^# (.*)$/gm, "<h1>$1</h1>")
+        .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+        .replace(/\[([^\]]+)]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+        .replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
+          const languageClass = lang ? `language-${lang}` : "";
+          return `<div class="code-wrapper">
+                    <button class="copy-btn" onclick="copyCode(this)">📋 Copy</button>
+                    <pre><code class="${languageClass}">${escapeHTML(code)}</code></pre>
+                  </div>`;
+        });
+    }
+
+    function appendMessage(sender, rawText, isTyping = false) {
+      const msg = document.createElement("div");
+      msg.className = `msg ${sender}`;
+      if (isTyping) msg.classList.add("typing");
+
+      const html = sender === "bot"
+        ? `<img class="avatar" src="https://img.freepik.com/premium-vector/ai-technology-icon-artificial-intelligence-machine-learning-concepts-futuristic-ai-symbol_689336-880.jpg" alt="Bot Avatar" />
+           <div class="bubble">${rawText}</div>`
+        : `<div class="bubble">${escapeHTML(rawText)}</div>`;
+
+      msg.innerHTML = html;
+      messages.appendChild(msg);
+      messages.scrollTop = messages.scrollHeight;
+
+      msg.querySelectorAll("pre code").forEach((block) => {
+        hljs.highlightElement(block);
+      });
+    }
+
+    function renderHistory() {
+      messages.innerHTML = "";
+      const savedHistory = JSON.parse(localStorage.getItem('chatHistory_' + sessionId)) || [];
+      savedHistory.forEach(({ role, content }) => {
+        const cls = role === 'user' ? 'user' : 'bot';
+        appendMessage(cls, formatResponse(content));
+      });
+    }
+
+    clearChatBtn.addEventListener("click", () => {
+      if (confirm("Clear all chat history?")) {
+        localStorage.removeItem('chatHistory_' + sessionId);
+        messages.innerHTML = "";
+      }
+    });
+
+    input.addEventListener("keypress", (e) => {
+      if (e.key === "Enter" && input.value.trim()) {
+        const userMsg = input.value.trim();
+        appendMessage("user", userMsg);
+        input.value = "";
+        appendMessage("bot", "Jarvis is typing...", true);
+
+        fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, message: userMsg }),
+        })
+          .then(res => res.json())
+          .then(data => {
+            const typingMsg = document.querySelector(".msg.bot.typing");
+            if (typingMsg) typingMsg.remove();
+
+            if (data.response) {
+              appendMessage("bot", formatResponse(data.response));
+              let chatHistory = JSON.parse(localStorage.getItem('chatHistory_' + sessionId)) || [];
+              chatHistory.push({ role: "user", content: userMsg });
+              chatHistory.push({ role: "assistant", content: data.response });
+              localStorage.setItem('chatHistory_' + sessionId, JSON.stringify(chatHistory));
+            } else {
+              appendMessage("bot", `❌ Error: ${data.error || "Unknown error"}`);
+            }
+          })
+          .catch(() => {
+            const typingMsg = document.querySelector(".msg.bot.typing");
+            if (typingMsg) typingMsg.remove();
+            appendMessage("bot", "❌ Error: Unable to reach server.");
+          });
+      }
+    });
+
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      appendMessage("user", `📎 Uploaded file: ${file.name}`);
+      appendMessage("bot", "Jarvis is reading the file...", true);
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      fetch("/upload", {
+        method: "POST",
+        body: formData
+      })
+        .then(res => res.json())
+        .then(data => {
+          const typingMsg = document.querySelector(".msg.bot.typing");
+          if (typingMsg) typingMsg.remove();
+
+          if (data.response && data.filename) {
+            appendMessage("bot", data.response);
+            fetch("/read-file", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ filename: data.filename })
+            })
+              .then(res => res.json())
+              .then(result => {
+                if (result.response) {
+                  appendMessage("bot", formatResponse(result.response));
+                } else {
+                  appendMessage("bot", `❌ ${result.error}`);
+                }
+              })
+              .catch(() => appendMessage("bot", "❌ Could not summarize file."));
+          } else {
+            appendMessage("bot", `❌ Upload failed: ${data.error || "Unknown error"}`);
+          }
+        })
+        .catch(() => {
+          const typingMsg = document.querySelector(".msg.bot.typing");
+          if (typingMsg) typingMsg.remove();
+          appendMessage("bot", "❌ Error: Unable to upload file.");
+        });
+
+      fileInput.value = "";
+    });
+
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.lang = "en-US";
+      recognition.interimResults = false;
+
+      micBtn.addEventListener("click", () => {
+        if (micBtn.classList.contains("listening")) {
+          recognition.stop();
+        } else {
+          recognition.start();
+        }
+      });
+
+      recognition.onstart = () => micBtn.classList.add("listening");
+      recognition.onend = () => micBtn.classList.remove("listening");
+      recognition.onresult = (event) => {
+        input.value = event.results[0][0].transcript;
+        input.focus();
+      };
+    } else {
+      micBtn.style.display = "none";
+      console.warn("SpeechRecognition not supported.");
+    }
+
+    function copyCode(button) {
+      const codeElement = button.parentElement.querySelector("code");
+      navigator.clipboard.writeText(codeElement.innerText).then(() => {
+        button.textContent = "Copied!";
+        setTimeout(() => (button.textContent = "📋 Copy"), 1500);
+      });
+    }
+
+    renderHistory();
+  </script>
+</body>
+
+</html>
