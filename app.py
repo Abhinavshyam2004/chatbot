@@ -5,7 +5,7 @@ import os
 import mimetypes
 
 # --- CONFIGURATION ---
-genai.configure(api_key="AIzaSyAXNUMB2Tm5I8zpXTcJgd9LQnrjap5j_uU")  # Move this to env var
+genai.configure(api_key="AIzaSyChLAYtaXK0wGIjnZ0CKberVPQO6HO2pmE")  # Move this to env var
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*")
