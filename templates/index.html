@@ -105,7 +105,8 @@
         const userMsg = input.value.trim();
         appendMessage("user", userMsg);
         input.value = "";
-        appendMessage("bot", "Jarvis is typing...", true);
+        appendMessage("bot", '<span class="loading-spinner"></span>', true);
+
 
         fetch("/chat", {
           method: "POST",
